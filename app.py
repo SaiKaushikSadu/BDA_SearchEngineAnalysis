@@ -2,9 +2,9 @@ import hashlib
 from pybloom_live import BloomFilter
 import sqlite3
 import os
+import shutil
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
 
 # Define the Flajolet-Martin class for estimating unique queries
 class FlajoletMartin:
@@ -27,6 +27,20 @@ class FlajoletMartin:
         avg_max_zeros = sum(self.max_zeros) / len(self.max_zeros)
         return 2 ** avg_max_zeros
 
+# Function to create a copy of the Chrome history database
+def create_database_copy():
+    username = os.getlogin()
+    source_path = f"C:\\Users\\{username}\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\History"
+    destination_path = f"C:\\Users\\{username}\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\History_copy"
+
+    # Remove the existing copy if it exists
+    if os.path.exists(destination_path):
+        os.remove(destination_path)
+
+    # Copy the original database to the new file
+    shutil.copy(source_path, destination_path)
+
+    return destination_path
 
 # Function to run the search engine query analytics with dynamic data
 def search_engine_query_analytics(df):
@@ -48,17 +62,16 @@ def search_engine_query_analytics(df):
     estimated_unique_queries = fm_algorithm.estimate_unique_queries()
     return duplicates, new_queries, int(estimated_unique_queries)
 
-
 # Function to fetch Chrome history data and run the analytics
 def get_chrome_history_and_run_analytics():
-    username = os.getlogin()
-    history_db_path = f"C:\\Users\\{username}\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\History"
+    # Create a copy of the Chrome history database
+    db_path = create_database_copy()
 
-    if not os.path.exists(history_db_path):
-        st.error(f"History file not found at {history_db_path}. Make sure the path is correct and Chrome is closed.")
+    if not os.path.exists(db_path):
+        st.error(f"History file not found at {db_path}. Make sure the path is correct and Chrome is closed.")
         return pd.DataFrame()
 
-    conn = sqlite3.connect(history_db_path)
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     query = """
@@ -76,15 +89,6 @@ def get_chrome_history_and_run_analytics():
     df = pd.DataFrame(results, columns=["URL", "Title", "Visit Time"])
     return df
 
-
-# Function to extract a shortened site name from URLs
-def extract_site_name(url):
-    # Split the URL to extract the site name
-    site_name = url.split("//")[-1].split("/")[0].replace('www.', '')
-    # Limit the site name to 10 characters and append "..." if longer
-    return site_name if len(site_name) <= 10 else site_name[:10] + '...'
-
-
 def main():
     st.title("Search Engine Query Analysis")
 
@@ -97,28 +101,25 @@ def main():
 
         # Display the results in Streamlit
         st.subheader("Results")
-        st.write(f"Number of new queries: {len(new_queries)}")
+        # st.write(f"Number of new queries: {len(new_queries)}")
+        st.write(f"Number of duplicate queries: {len(duplicates)}")
         st.write(f"Estimated number of unique queries: {estimated_unique_queries}")
 
         if duplicates:
+            # Truncate site names to a maximum of 10 characters followed by '...' if necessary
+            df['Short Title'] = df['Title'].apply(lambda x: x[:10] + '...' if len(x) > 10 else x)
+
+            # Count duplicates for the bar chart
+            duplicate_counts = pd.Series(duplicates).value_counts()
+            duplicate_counts = duplicate_counts.reset_index()
+            duplicate_counts.columns = ['Site', 'Count']
+            duplicate_counts['Site'] = duplicate_counts['Site'].apply(lambda x: x[:10] + '...' if len(x) > 10 else x)
+
+            # Plot bar chart
+            st.subheader("Duplicate Queries Analysis")
+            st.bar_chart(data=duplicate_counts.set_index('Site'), width=800)
+
             st.write(f"Number of duplicate queries: {len(duplicates)}")
-
-            # Extract site names from duplicate URLs and shorten them
-            site_names = [extract_site_name(url) for url in duplicates]
-            site_count = pd.Series(site_names).value_counts()
-
-            # Plot a bar chart using Matplotlib
-            # fig, ax = plt.subplots()
-            fig, ax = plt.subplots(figsize=(15, 6)) 
-            site_count.plot(kind='bar', ax=ax)
-            ax.set_title("Count of Duplicate Queries by Site")
-            ax.set_xlabel("Site Name")
-            ax.set_ylabel("Count of Duplicates")
-
-            # Display the bar chart in Streamlit
-            st.pyplot(fig)
-
-            # Display unique and duplicate queries as dataframes
             st.write("Unique Queries:")
             st.dataframe(pd.DataFrame(new_queries, columns=["Unique Queries"]), use_container_width=True)
             st.write("Duplicate Queries:")
